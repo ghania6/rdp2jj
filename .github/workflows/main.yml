@@ -1,0 +1,80 @@
+name: Run Optimized Windows RDP
+
+on: [workflow_dispatch]
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Configure Windows User and RDP
+        shell: powershell
+        run: |
+          $Password = ConvertTo-SecureString "WindowsPassword123!" -AsPlainText -Force
+          Set-LocalUser -Name "runneradmin" -Password $Password
+
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -name "fDenyTSConnections" -Value 0
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -name "UserAuthentication" -Value 0
+
+          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+
+          Set-Service -Name "TermService" -StartupType Automatic
+          Start-Service -Name "TermService"
+
+      - name: Optimize Windows Performance
+        shell: powershell
+        run: |
+          # 1. Disable Windows Defender to boost CPU and Disk I/O speed
+          Set-MpPreference -DisableRealtimeMonitoring $true -ErrorAction SilentlyContinue
+          Set-MpPreference -DisableBehaviorMonitoring $true -ErrorAction SilentlyContinue
+
+          # 2. Force High Performance Power Plan
+          powercfg /setactive 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c
+
+          # 3. Stop and disable heavy background services
+          Stop-Service -Name "SysMain" -Force -ErrorAction SilentlyContinue
+          Set-Service -Name "SysMain" -StartupType Disabled -ErrorAction SilentlyContinue
+          Stop-Service -Name "DiagTrack" -Force -ErrorAction SilentlyContinue
+          Set-Service -Name "DiagTrack" -StartupType Disabled -ErrorAction SilentlyContinue
+
+          # 4. Adjust visual effects for best performance
+          $Path = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects"
+          if (-not (Test-Path $Path)) { New-Item -Path $Path -Force | Out-Null }
+          Set-ItemProperty -Path $Path -Name "VisualFXSetting" -Value 2 -ErrorAction SilentlyContinue
+
+      - name: Launch Tunnel and Connect
+        shell: powershell
+        run: |
+          Invoke-WebRequest -Uri "https://github.com/ekzhang/bore/releases/download/v0.5.1/bore-v0.5.1-x86_64-pc-windows-msvc.zip" -OutFile "bore.zip"
+          Expand-Archive -Path "bore.zip" -DestinationPath "."
+
+          Start-Process -FilePath ".\bore.exe" -ArgumentList "local 3389 --to bore.pub" -RedirectStandardOutput "bore.log" -RedirectStandardError "bore_err.log" -WindowStyle Hidden
+
+          $tcp_address = $null
+          for ($i = 0; $i -lt 15; $i++) {
+              Start-Sleep -Seconds 2
+              $log = Get-Content -Path "bore.log" -ErrorAction SilentlyContinue
+              $tcp_address = $log | Select-String -Pattern "bore.pub:[0-9]+" | ForEach-Object { $_.Matches.Value }
+              if ($tcp_address) {
+                  break
+              }
+          }
+
+          if ($tcp_address) {
+              Write-Output "========================================================"
+              Write-Output "SUCCESS: Windows Server is ready for remote connection!"
+              Write-Output "========================================================"
+              Write-Output "Connection details for your RDP Client (PC or Mobile):"
+              Write-Output "   - Computer Address: $tcp_address"
+              Write-Output "   - Username: runneradmin"
+              Write-Output "   - Password: WindowsPassword123!"
+              Write-Output "========================================================"
+          } else {
+              Write-Output "ERROR: Failed to automatically fetch connection address."
+              Write-Output "Dump of bore.log:"
+              Get-Content -Path "bore.log" -ErrorAction SilentlyContinue
+              Write-Output "Dump of bore_err.log:"
+              Get-Content -Path "bore_err.log" -ErrorAction SilentlyContinue
+          }
+
+          Write-Output "Keeping Windows Server active..."
+          Start-Sleep -Seconds 21600
