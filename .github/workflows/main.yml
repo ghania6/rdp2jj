@@ -1,4 +1,4 @@
-name: Run Optimized Windows RDP
+name: Run Optimized Windows 2025 RDP
 
 on: [workflow_dispatch]
 
@@ -20,23 +20,27 @@ jobs:
           Set-Service -Name "TermService" -StartupType Automatic
           Start-Service -Name "TermService"
 
-      - name: Optimize Windows Performance
+      - name: Optimize Windows 2025 Performance & Power Consumption
         shell: powershell
         run: |
           # 1. Disable Windows Defender to boost CPU and Disk I/O speed
           Set-MpPreference -DisableRealtimeMonitoring $true -ErrorAction SilentlyContinue
           Set-MpPreference -DisableBehaviorMonitoring $true -ErrorAction SilentlyContinue
 
-          # 2. Force High Performance Power Plan
+          # 2. Force High Performance Power Plan (unthrottled CPU speed)
           powercfg /setactive 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c
 
-          # 3. Stop and disable heavy background services
-          Stop-Service -Name "SysMain" -Force -ErrorAction SilentlyContinue
-          Set-Service -Name "SysMain" -StartupType Disabled -ErrorAction SilentlyContinue
-          Stop-Service -Name "DiagTrack" -Force -ErrorAction SilentlyContinue
-          Set-Service -Name "DiagTrack" -StartupType Disabled -ErrorAction SilentlyContinue
+          # 3. Disable heavy background services (Search, Update, Delivery Optimization, Superfetch, Telemetry)
+          $Services = @("WSearch", "wuauserv", "DoSvc", "SysMain", "DiagTrack")
+          foreach ($Service in $Services) {
+              Stop-Service -Name $Service -Force -ErrorAction SilentlyContinue
+              Set-Service -Name $Service -StartupType Disabled -ErrorAction SilentlyContinue
+          }
 
-          # 4. Adjust visual effects for best performance
+          # 4. Limit RDP Color Depth to 16-bit (Saves huge data and battery/rendering power on your phone/PC!)
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -name "ColorDepth" -Value 3 -ErrorAction SilentlyContinue
+
+          # 5. Disable Visual Effects on Host
           $Path = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects"
           if (-not (Test-Path $Path)) { New-Item -Path $Path -Force | Out-Null }
           Set-ItemProperty -Path $Path -Name "VisualFXSetting" -Value 2 -ErrorAction SilentlyContinue
