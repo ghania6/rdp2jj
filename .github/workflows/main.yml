@@ -1,4 +1,4 @@
-name: Run Optimized Windows 2025 RDP
+name: Ultimate Optimized Windows 2025 RDP
 
 on: [workflow_dispatch]
 
@@ -48,11 +48,14 @@ jobs:
       - name: Launch Tunnel and Connect
         shell: powershell
         run: |
+          # Download and unzip the lightweight Bore tunneling utility
           Invoke-WebRequest -Uri "https://github.com/ekzhang/bore/releases/download/v0.5.1/bore-v0.5.1-x86_64-pc-windows-msvc.zip" -OutFile "bore.zip"
           Expand-Archive -Path "bore.zip" -DestinationPath "."
 
+          # Start Bore in the background to tunnel Windows RDP Port 3389
           Start-Process -FilePath ".\bore.exe" -ArgumentList "local 3389 --to bore.pub" -RedirectStandardOutput "bore.log" -RedirectStandardError "bore_err.log" -WindowStyle Hidden
 
+          # Loop and fetch connection address from bore.log dynamically
           $tcp_address = $null
           for ($i = 0; $i -lt 15; $i++) {
               Start-Sleep -Seconds 2
@@ -63,6 +66,7 @@ jobs:
               }
           }
 
+          # Display the beautifully formatted connection instructions
           if ($tcp_address) {
               Write-Output "========================================================"
               Write-Output "SUCCESS: Windows Server is ready for remote connection!"
