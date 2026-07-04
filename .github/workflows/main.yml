@@ -1,84 +1,35 @@
-name: Run Optimized Windows 2025 RDP
-
-on: [workflow_dispatch]
-
+name: Caching with npm
+on: push
 jobs:
   build:
-    runs-on: windows-latest
+    runs-on: ubuntu-latest
     steps:
-      - name: Configure Windows User and RDP
-        shell: powershell
-        run: |
-          $Password = ConvertTo-SecureString "WindowsPassword123!" -AsPlainText -Force
-          Set-LocalUser -Name "runneradmin" -Password $Password
+      - uses: actions/checkout@v6
 
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -name "fDenyTSConnections" -Value 0
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -name "UserAuthentication" -Value 0
+      - name: Cache node modules
+        id: cache-npm
+        uses: actions/cache@v4
+        env:
+          cache-name: cache-node-modules
+        with:
+          # npm cache files are stored in `~/.npm` on Linux/macOS
+          path: ~/.npm
+          key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-build-${{ env.cache-name }}-
+            ${{ runner.os }}-build-
+            ${{ runner.os }}-
 
-          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+      - if: ${{ steps.cache-npm.outputs.cache-hit != 'true' }}
+        name: List the state of node modules
+        continue-on-error: true
+        run: npm list
 
-          Set-Service -Name "TermService" -StartupType Automatic
-          Start-Service -Name "TermService"
+      - name: Install dependencies
+        run: npm install
 
-      - name: Optimize Windows 2025 Performance & Power Consumption
-        shell: powershell
-        run: |
-          # 1. Disable Windows Defender to boost CPU and Disk I/O speed
-          Set-MpPreference -DisableRealtimeMonitoring $true -ErrorAction SilentlyContinue
-          Set-MpPreference -DisableBehaviorMonitoring $true -ErrorAction SilentlyContinue
+      - name: Build
+        run: npm run build
 
-          # 2. Force High Performance Power Plan (unthrottled CPU speed)
-          powercfg /setactive 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c
-
-          # 3. Disable heavy background services (Search, Update, Delivery Optimization, Superfetch, Telemetry)
-          $Services = @("WSearch", "wuauserv", "DoSvc", "SysMain", "DiagTrack")
-          foreach ($Service in $Services) {
-              Stop-Service -Name $Service -Force -ErrorAction SilentlyContinue
-              Set-Service -Name $Service -StartupType Disabled -ErrorAction SilentlyContinue
-          }
-
-          # 4. Limit RDP Color Depth to 16-bit (Saves huge data and battery/rendering power on your phone/PC!)
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -name "ColorDepth" -Value 3 -ErrorAction SilentlyContinue
-
-          # 5. Disable Visual Effects on Host
-          $Path = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects"
-          if (-not (Test-Path $Path)) { New-Item -Path $Path -Force | Out-Null }
-          Set-ItemProperty -Path $Path -Name "VisualFXSetting" -Value 2 -ErrorAction SilentlyContinue
-
-      - name: Launch Tunnel and Connect
-        shell: powershell
-        run: |
-          Invoke-WebRequest -Uri "https://github.com/ekzhang/bore/releases/download/v0.5.1/bore-v0.5.1-x86_64-pc-windows-msvc.zip" -OutFile "bore.zip"
-          Expand-Archive -Path "bore.zip" -DestinationPath "."
-
-          Start-Process -FilePath ".\bore.exe" -ArgumentList "local 3389 --to bore.pub" -RedirectStandardOutput "bore.log" -RedirectStandardError "bore_err.log" -WindowStyle Hidden
-
-          $tcp_address = $null
-          for ($i = 0; $i -lt 15; $i++) {
-              Start-Sleep -Seconds 2
-              $log = Get-Content -Path "bore.log" -ErrorAction SilentlyContinue
-              $tcp_address = $log | Select-String -Pattern "bore.pub:[0-9]+" | ForEach-Object { $_.Matches.Value }
-              if ($tcp_address) {
-                  break
-              }
-          }
-
-          if ($tcp_address) {
-              Write-Output "========================================================"
-              Write-Output "SUCCESS: Windows Server is ready for remote connection!"
-              Write-Output "========================================================"
-              Write-Output "Connection details for your RDP Client (PC or Mobile):"
-              Write-Output "   - Computer Address: $tcp_address"
-              Write-Output "   - Username: runneradmin"
-              Write-Output "   - Password: WindowsPassword123!"
-              Write-Output "========================================================"
-          } else {
-              Write-Output "ERROR: Failed to automatically fetch connection address."
-              Write-Output "Dump of bore.log:"
-              Get-Content -Path "bore.log" -ErrorAction SilentlyContinue
-              Write-Output "Dump of bore_err.log:"
-              Get-Content -Path "bore_err.log" -ErrorAction SilentlyContinue
-          }
-
-          Write-Output "Keeping Windows Server active..."
-          Start-Sleep -Seconds 21600
+      - name: Test
+        run: npm test
