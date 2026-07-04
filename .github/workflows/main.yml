@@ -1,4 +1,4 @@
-name: Run Optimized Windows 2025 RDP
+name: Run HTML5 Windows Browser VNC
 
 on: [workflow_dispatch]
 
@@ -6,52 +6,40 @@ jobs:
   build:
     runs-on: windows-latest
     steps:
-      - name: Configure Windows User and RDP
+      - name: Install and Configure TightVNC Server
         shell: powershell
         run: |
-          $Password = ConvertTo-SecureString "WindowsPassword123!" -AsPlainText -Force
-          Set-LocalUser -Name "runneradmin" -Password $Password
+          Invoke-WebRequest -Uri "https://www.tightvnc.com/download/2.8.81/tightvnc-2.8.81-gpl-setup-64bit.msi" -OutFile "tightvnc.msi"
+          
+          Start-Process -FilePath "msiexec.exe" -ArgumentList "/i tightvnc.msi /quiet /norestart ADDLOCAL=Server SERVER_REGISTER_AS_SERVICE=1 SERVER_ADD_FIREWALL_EXCEPTION=1 SET_USEVNCAUTHENTICATION=1 VALUE_OF_USEVNCAUTHENTICATION=1 SET_PASSWORD=1 VALUE_OF_PASSWORD=password SET_USECONTROLAUTHENTICATION=1 VALUE_OF_USECONTROLAUTHENTICATION=1 SET_CONTROLPASSWORD=1 VALUE_OF_CONTROLPASSWORD=password" -Wait
 
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -name "fDenyTSConnections" -Value 0
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -name "UserAuthentication" -Value 0
+          Start-Service -Name "tvnserver" -ErrorAction SilentlyContinue
 
-          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
-
-          Set-Service -Name "TermService" -StartupType Automatic
-          Start-Service -Name "TermService"
-
-      - name: Optimize Windows 2025 Performance & Power Consumption
+      - name: Optimize Windows Performance
         shell: powershell
         run: |
-          # 1. Disable Windows Defender to boost CPU and Disk I/O speed
           Set-MpPreference -DisableRealtimeMonitoring $true -ErrorAction SilentlyContinue
           Set-MpPreference -DisableBehaviorMonitoring $true -ErrorAction SilentlyContinue
 
-          # 2. Force High Performance Power Plan (unthrottled CPU speed)
           powercfg /setactive 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c
 
-          # 3. Disable heavy background services (Search, Update, Delivery Optimization, Superfetch, Telemetry)
           $Services = @("WSearch", "wuauserv", "DoSvc", "SysMain", "DiagTrack")
           foreach ($Service in $Services) {
               Stop-Service -Name $Service -Force -ErrorAction SilentlyContinue
               Set-Service -Name $Service -StartupType Disabled -ErrorAction SilentlyContinue
           }
 
-          # 4. Limit RDP Color Depth to 16-bit (Saves huge data and battery/rendering power on your phone/PC!)
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -name "ColorDepth" -Value 3 -ErrorAction SilentlyContinue
-
-          # 5. Disable Visual Effects on Host
-          $Path = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects"
-          if (-not (Test-Path $Path)) { New-Item -Path $Path -Force | Out-Null }
-          Set-ItemProperty -Path $Path -Name "VisualFXSetting" -Value 2 -ErrorAction SilentlyContinue
-
-      - name: Launch Tunnel and Connect
+      - name: Launch noVNC and Tunnel
         shell: powershell
         run: |
+          Invoke-WebRequest -Uri "https://github.com/pgaskin/easy-novnc/releases/download/v1.1.0/easy-novnc_windows.exe" -OutFile "easy-novnc.exe"
+
           Invoke-WebRequest -Uri "https://github.com/ekzhang/bore/releases/download/v0.5.1/bore-v0.5.1-x86_64-pc-windows-msvc.zip" -OutFile "bore.zip"
           Expand-Archive -Path "bore.zip" -DestinationPath "."
 
-          Start-Process -FilePath ".\bore.exe" -ArgumentList "local 3389 --to bore.pub" -RedirectStandardOutput "bore.log" -RedirectStandardError "bore_err.log" -WindowStyle Hidden
+          Start-Process -FilePath ".\easy-novnc.exe" -ArgumentList "--addr :6080 --host localhost --port 5900" -WindowStyle Hidden
+
+          Start-Process -FilePath ".\bore.exe" -ArgumentList "local 6080 --to bore.pub" -RedirectStandardOutput "bore.log" -RedirectStandardError "bore_err.log" -WindowStyle Hidden
 
           $tcp_address = $null
           for ($i = 0; $i -lt 15; $i++) {
@@ -64,13 +52,12 @@ jobs:
           }
 
           if ($tcp_address) {
+              $http_address = $tcp_address -replace "bore.pub:", "http://bore.pub:"
               Write-Output "========================================================"
-              Write-Output "SUCCESS: Windows Server is ready for remote connection!"
+              Write-Output "SUCCESS: Windows Browser VNC is ready!"
               Write-Output "========================================================"
-              Write-Output "Connection details for your RDP Client (PC or Mobile):"
-              Write-Output "   - Computer Address: $tcp_address"
-              Write-Output "   - Username: runneradmin"
-              Write-Output "   - Password: WindowsPassword123!"
+              Write-Output "Click the link below to open Windows directly in your browser:"
+              Write-Output "   👉 $http_address/?resize=scale&autoconnect=1&password=password"
               Write-Output "========================================================"
           } else {
               Write-Output "ERROR: Failed to automatically fetch connection address."
