@@ -1,4 +1,4 @@
-name: Run Windows RDP via Port 443
+name: Run Windows RDP
 
 on: [workflow_dispatch]
 
@@ -20,42 +20,23 @@ jobs:
           Set-Service -Name "TermService" -StartupType Automatic
           Start-Service -Name "TermService"
 
-      - name: Optimize Windows 2025 Performance & Power Consumption
+      - name: Launch Tunnel and Connect
         shell: powershell
         run: |
-          # 1. Disable Windows Defender to boost CPU and Disk I/O speed
-          Set-MpPreference -DisableRealtimeMonitoring $true -ErrorAction SilentlyContinue
-          Set-MpPreference -DisableBehaviorMonitoring $true -ErrorAction SilentlyContinue
-
-          # 2. Force High Performance Power Plan (unthrottled CPU speed)
-          powercfg /setactive 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c
-
-          # 3. Disable heavy background services (Search, Update, Delivery Optimization, Superfetch, Telemetry)
-          $Services = @("WSearch", "wuauserv", "DoSvc", "SysMain", "DiagTrack")
-          foreach ($Service in $Services) {
-              Stop-Service -Name $Service -Force -ErrorAction SilentlyContinue
-              Set-Service -Name $Service -StartupType Disabled -ErrorAction SilentlyContinue
+          # Start the SSH process in background with -t to force TTY and avoid buffering
+          Start-Process -FilePath "cmd.exe" -ArgumentList "/c ssh -t -p 443 -o StrictHostKeyChecking=no -o UserKnownHostsFile=NUL -o ServerAliveInterval=30 -R 0:127.0.0.1:3389 tcp@a.pinggy.io > pinggy.log 2> pinggy_err.log" -WindowStyle Hidden
+          
+          # Smart loop to scan the log file every 2 seconds for up to 30 seconds
+          $tcp_line = $null
+          for ($i = 0; $i -lt 15; $i++) {
+              Start-Sleep -Seconds 2
+              $log = Get-Content -Path "pinggy.log" -ErrorAction SilentlyContinue
+              $tcp_line = $log | Select-String -Pattern "tcp://[a-zA-Z0-9.-]+:[0-9]+" | ForEach-Object { $_.Matches.Value }
+              if ($tcp_line) {
+                  break
+              }
           }
 
-          # 4. Limit RDP Color Depth to 16-bit (Saves huge data and battery/rendering power on your phone/PC!)
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -name "ColorDepth" -Value 3 -ErrorAction SilentlyContinue
-
-          # 5. Disable Visual Effects on Host
-          $Path = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects"
-          if (-not (Test-Path $Path)) { New-Item -Path $Path -Force | Out-Null }
-          Set-ItemProperty -Path $Path -Name "VisualFXSetting" -Value 2 -ErrorAction SilentlyContinue
-
-      - name: Launch Tunnel and Connect on Port 443
-        shell: powershell
-        run: |
-          # تشغيل نفق الاتصال في الخلفية لربط منفذ الـ RDP (3389) عبر منفذ الويب الآمن 443
-          Start-Process -FilePath "cmd.exe" -ArgumentList "/c ssh -T -p 443 -o StrictHostKeyChecking=no -o UserKnownHostsFile=NUL -o ServerAliveInterval=30 -R 0:127.0.0.1:3389 tcp@free.pinggy.io > pinggy.log 2> pinggy_err.log" -WindowStyle Hidden
-          Start-Sleep -Seconds 12
-
-          # قراءة السجلات واستخراج عنوان ومنفذ الاتصال الجديد تلقائياً
-          $log = Get-Content -Path "pinggy.log" -ErrorAction SilentlyContinue
-          $tcp_line = $log | Select-String -Pattern "tcp://[a-zA-Z0-9.-]+\.pinggy\.link:[0-9]+|tcp://[a-zA-Z0-9.-]+\.pinggy-free\.link:[0-9]+|tcp://[a-zA-Z0-9.-]+\.free\.pinggy\.net:[0-9]+" | ForEach-Object { $_.Matches.Value }
-          
           if ($tcp_line) {
               $tcp_clean = $tcp_line -replace "tcp://", ""
               Write-Output "========================================================"
