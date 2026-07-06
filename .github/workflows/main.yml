@@ -1,35 +1,72 @@
-name: Caching with npm
-on: push
+name: Run HTML5 Windows Browser VNC
+
+on: [workflow_dispatch]
+
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v6
+      - name: Install and Configure TightVNC Server
+        shell: powershell
+        run: |
+          Invoke-WebRequest -Uri "https://www.tightvnc.com/download/2.8.81/tightvnc-2.8.81-gpl-setup-64bit.msi" -OutFile "tightvnc.msi"
+          
+          Start-Process -FilePath "msiexec.exe" -ArgumentList "/i tightvnc.msi /quiet /norestart ADDLOCAL=Server SERVER_REGISTER_AS_SERVICE=1 SERVER_ADD_FIREWALL_EXCEPTION=1 SET_USEVNCAUTHENTICATION=1 VALUE_OF_USEVNCAUTHENTICATION=1 SET_PASSWORD=1 VALUE_OF_PASSWORD=password SET_USECONTROLAUTHENTICATION=1 VALUE_OF_USECONTROLAUTHENTICATION=1 SET_CONTROLPASSWORD=1 VALUE_OF_CONTROLPASSWORD=password SET_ALLOWLOOPBACK=1 VALUE_OF_ALLOWLOOPBACK=1" -Wait
 
-      - name: Cache node modules
-        id: cache-npm
-        uses: actions/cache@v4
-        env:
-          cache-name: cache-node-modules
-        with:
-          # npm cache files are stored in `~/.npm` on Linux/macOS
-          path: ~/.npm
-          key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ hashFiles('**/package-lock.json') }}
-          restore-keys: |
-            ${{ runner.os }}-build-${{ env.cache-name }}-
-            ${{ runner.os }}-build-
-            ${{ runner.os }}-
+          Start-Service -Name "tvnserver" -ErrorAction SilentlyContinue
 
-      - if: ${{ steps.cache-npm.outputs.cache-hit != 'true' }}
-        name: List the state of node modules
-        continue-on-error: true
-        run: npm list
+      - name: Optimize Windows Performance
+        shell: powershell
+        run: |
+          Set-MpPreference -DisableRealtimeMonitoring $true -ErrorAction SilentlyContinue
+          Set-MpPreference -DisableBehaviorMonitoring $true -ErrorAction SilentlyContinue
 
-      - name: Install dependencies
-        run: npm install
+          powercfg /setactive 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c
 
-      - name: Build
-        run: npm run build
+          $Services = @("WSearch", "wuauserv", "DoSvc", "SysMain", "DiagTrack")
+          foreach ($Service in $Services) {
+              Stop-Service -Name $Service -Force -ErrorAction SilentlyContinue
+              Set-Service -Name $Service -StartupType Disabled -ErrorAction SilentlyContinue
+          }
 
-      - name: Test
-        run: npm test
+      - name: Launch noVNC and Tunnel
+        shell: powershell
+        run: |
+          # تحميل أداة easy-novnc للويندوز
+          Invoke-WebRequest -Uri "https://github.com/pgaskin/easy-novnc/releases/download/v1.1.0/easy-novnc_windows.exe" -OutFile "easy-novnc.exe"
+
+          # تشغيل easy-novnc لربط منفذ البث بصفحة ويب محلية
+          Start-Process -FilePath ".\easy-novnc.exe" -ArgumentList "--addr :6080 --host 127.0.0.1 --port 5900" -WindowStyle Hidden
+          Start-Sleep -Seconds 3
+
+          # تشغيل نفق الاتصال الآمن والمشفر رسمياً عبر منفذ الويب الآمن 443
+          Start-Process -FilePath "cmd.exe" -ArgumentList "/c ssh -T -p 443 -o StrictHostKeyChecking=no -o UserKnownHostsFile=NUL -o ServerAliveInterval=30 -R 0:127.0.0.1:6080 free.pinggy.io > pinggy.log 2> pinggy_err.log" -WindowStyle Hidden
+
+          # حلقة فحص سريعة لالتقاط رابط الـ HTTPS المتجاوب والمفتوح
+          $http_address = $null
+          for ($i = 0; $i -lt 15; $i++) {
+              Start-Sleep -Seconds 2
+              $log = Get-Content -Path "pinggy.log" -ErrorAction SilentlyContinue
+              $http_address = $log | Select-String -Pattern "https://[a-zA-Z0-9.-]+\.pinggy\.link|https://[a-zA-Z0-9.-]+\.pinggy-free\.link|https://[a-zA-Z0-9.-]+\.free\.pinggy\.net" | ForEach-Object { $_.Matches.Value }
+              if ($http_address) {
+                  break
+              }
+          }
+
+          if ($http_address) {
+              Write-Output "========================================================"
+              Write-Output "SUCCESS: Windows Browser VNC is ready (Firewall Friendly)!"
+              Write-Output "========================================================"
+              Write-Output "Click the link below to open Windows directly in your browser:"
+              Write-Output "   👉 $http_address/vnc.html?resize=scale&autoconnect=1&password=password"
+              Write-Output "========================================================"
+          } else {
+              Write-Output "ERROR: Failed to automatically fetch connection address."
+              Write-Output "Dump of pinggy.log:"
+              Get-Content -Path "pinggy.log" -ErrorAction SilentlyContinue
+              Write-Output "Dump of pinggy_err.log:"
+              Get-Content -Path "pinggy_err.log" -ErrorAction SilentlyContinue
+          }
+
+          Write-Output "Keeping Windows Server active..."
+          Start-Sleep -Seconds 21600
