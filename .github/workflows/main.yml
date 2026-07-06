@@ -23,10 +23,11 @@ jobs:
       - name: Launch Tunnel and Connect
         shell: powershell
         run: |
-          # Start the SSH process in background with -t to force TTY and avoid buffering
+          # تم استبدال -T بـ -t لتفعيل ميزة الـ TTY التفاعلية لتجبر السيرفر على إظهار الرابط فوراً دون أي حجز للذاكرة
+          # تم تغيير المخدم إلى المخدم الرئيسي الرسمي المستقر a.pinggy.io
           Start-Process -FilePath "cmd.exe" -ArgumentList "/c ssh -t -p 443 -o StrictHostKeyChecking=no -o UserKnownHostsFile=NUL -o ServerAliveInterval=30 -R 0:127.0.0.1:3389 tcp@a.pinggy.io > pinggy.log 2> pinggy_err.log" -WindowStyle Hidden
           
-          # Smart loop to scan the log file every 2 seconds for up to 30 seconds
+          # حلقة فحص متطورة تبحث في السجل كل ثانيتين وتلتقط الرابط فوراً
           $tcp_line = $null
           for ($i = 0; $i -lt 15; $i++) {
               Start-Sleep -Seconds 2
