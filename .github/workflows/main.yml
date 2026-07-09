@@ -1,60 +1,87 @@
-name: Run Windows RDP
+name: Ultimate Windows RDP (Ngrok Pro - Anti Firewall & Win 7)
 
-on: [workflow_dispatch]
+on:
+  workflow_dispatch:
+    inputs:
+      ngrok_token:
+        description: 'Enter your Ngrok Authtoken'
+        required: true
+        type: string
 
 jobs:
   build:
     runs-on: windows-latest
     steps:
-      - name: Configure Windows User and RDP
+      - name: Configure Windows User, NLA & Kill Firewall
         shell: powershell
         run: |
           $Password = ConvertTo-SecureString "WindowsPassword123!" -AsPlainText -Force
           Set-LocalUser -Name "runneradmin" -Password $Password
 
+          # Enable RDP Connections
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -name "fDenyTSConnections" -Value 0
+          
+          # FIX FOR WINDOWS 7: Disable Network Level Authentication (NLA) & Security Layer
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -name "UserAuthentication" -Value 0
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -name "SecurityLayer" -Value 0
 
-          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
-
-          Set-Service -Name "TermService" -StartupType Automatic
-          Start-Service -Name "TermService"
-
-      - name: Launch Tunnel and Connect
+          # BYPASS/DISABLE WINDOWS FIREWALL COMPLETELY (تعطيل كامل لجدار الحماية)
+          Set-NetFirewallProfile -Profile Domain,Public,Private -Enabled False
+          
+          Restart-Service -Name "TermService" -Force
+          
+      - name: Optimize System Performance
         shell: powershell
         run: |
-          # تم استبدال -T بـ -t لتفعيل ميزة الـ TTY التفاعلية لتجبر السيرفر على إظهار الرابط فوراً دون أي حجز للذاكرة
-          # تم تغيير المخدم إلى المخدم الرئيسي الرسمي المستقر a.pinggy.io
-          Start-Process -FilePath "cmd.exe" -ArgumentList "/c ssh -t -p 443 -o StrictHostKeyChecking=no -o UserKnownHostsFile=NUL -o ServerAliveInterval=30 -R 0:127.0.0.1:3389 tcp@a.pinggy.io > pinggy.log 2> pinggy_err.log" -WindowStyle Hidden
+          Set-MpPreference -DisableRealtimeMonitoring $true -ErrorAction SilentlyContinue
+          powercfg /setactive 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c
+          $Services = @("WSearch", "wuauserv", "DoSvc", "SysMain", "DiagTrack")
+          foreach ($Service in $Services) {
+              Stop-Service -Name $Service -Force -ErrorAction SilentlyContinue
+              Set-Service -Name $Service -StartupType Disabled -ErrorAction SilentlyContinue
+          }
+
+      - name: Launch Ngrok Tunnel & Connect
+        shell: powershell
+        run: |
+          # Install Ngrok via Chocolatey
+          choco install ngrok --no-progress -y
           
-          # حلقة فحص متطورة تبحث في السجل كل ثانيتين وتلتقط الرابط فوراً
-          $tcp_line = $null
+          # Configure Authtoken from GitHub Input
+          ngrok config add-authtoken "${{ github.event.inputs.ngrok_token }}"
+          
+          # Start Tunnel and create a log file
+          Start-Process ngrok -ArgumentList "tcp 3389 --log=stdout" -RedirectStandardOutput "ngrok.log" -WindowStyle Hidden
+          
+          Write-Output "Waiting for Ngrok API to start..."
+          $TunnelUrl = $null
+          
+          # Smart Loop: Try to connect to the API 15 times (every 2 seconds)
           for ($i = 0; $i -lt 15; $i++) {
               Start-Sleep -Seconds 2
-              $log = Get-Content -Path "pinggy.log" -ErrorAction SilentlyContinue
-              $tcp_line = $log | Select-String -Pattern "tcp://[a-zA-Z0-9.-]+:[0-9]+" | ForEach-Object { $_.Matches.Value }
-              if ($tcp_line) {
-                  break
+              try {
+                  $NgrokApi = Invoke-RestMethod -Uri "http://127.0.0.1:4040/api/tunnels" -ErrorAction Stop
+                  $TunnelUrl = $NgrokApi.tunnels[0].public_url
+                  if ($TunnelUrl) { break }
+              } catch {
+                  # API not ready yet, keep waiting
               }
           }
-
-          if ($tcp_line) {
-              $tcp_clean = $tcp_line -replace "tcp://", ""
+          
+          if ($TunnelUrl) {
+              $CleanUrl = $TunnelUrl -replace "tcp://", ""
               Write-Output "========================================================"
-              Write-Output "SUCCESS: Windows Server is ready for remote connection!"
+              Write-Output "SUCCESS: Ngrok Tunnel is Active!"
               Write-Output "========================================================"
-              Write-Output "Connection details for your RDP Client (PC or Mobile):"
-              Write-Output "   - Computer Address: $tcp_clean"
-              Write-Output "   - Username: runneradmin"
-              Write-Output "   - Password: WindowsPassword123!"
+              Write-Output " Computer Address : $CleanUrl"
+              Write-Output " Username         : runneradmin"
+              Write-Output " Password         : WindowsPassword123!"
               Write-Output "========================================================"
           } else {
-              Write-Output "ERROR: Failed to automatically fetch connection address."
-              Write-Output "Dump of pinggy.log:"
-              Get-Content -Path "pinggy.log" -ErrorAction SilentlyContinue
-              Write-Output "Dump of pinggy_err.log:"
-              Get-Content -Path "pinggy_err.log" -ErrorAction SilentlyContinue
+              Write-Output "ERROR: Failed to launch Ngrok tunnel."
+              Write-Output "--- Ngrok Log ---"
+              Get-Content "ngrok.log" -ErrorAction SilentlyContinue
           }
 
-          Write-Output "Keeping Windows Server active..."
+          # Keep Active for 6 Hours
           Start-Sleep -Seconds 21600
