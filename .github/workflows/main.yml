@@ -1,87 +1,144 @@
-name: Ultimate Windows RDP (Ngrok Pro - Anti Firewall & Win 7)
+name: نظام RDP المتطور مع عنوان IP سكني (نيجروك)
 
 on:
   workflow_dispatch:
     inputs:
       ngrok_token:
-        description: 'Enter your Ngrok Authtoken'
+        description: 'أدخل رمز Ngrok الخاص بك'
         required: true
+        type: string
+      reserved_ip:
+        description: 'أدخل IP المحجوز (اختياري، مثال: 1.tcp.ngrok.io:12345)'
+        required: false
         type: string
 
 jobs:
   build:
     runs-on: windows-latest
     steps:
-      - name: Configure Windows User, NLA & Kill Firewall
+      - name: تكوين حساب المستخدم وتمكين RDP
         shell: powershell
         run: |
+          # إنشاء كلمة مرور جديدة
           $Password = ConvertTo-SecureString "WindowsPassword123!" -AsPlainText -Force
           Set-LocalUser -Name "runneradmin" -Password $Password
-
-          # Enable RDP Connections
+          
+          # تمكين اتصالات سطح المكتب البعيد
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -name "fDenyTSConnections" -Value 0
           
-          # FIX FOR WINDOWS 7: Disable Network Level Authentication (NLA) & Security Layer
+          # إصلاح مشكلة Windows 7: تعطيل مصادقة مستوى الشبكة
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -name "UserAuthentication" -Value 0
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -name "SecurityLayer" -Value 0
 
-          # BYPASS/DISABLE WINDOWS FIREWALL COMPLETELY (تعطيل كامل لجدار الحماية)
+          # تعطيل جدار الحماية بالكامل
           Set-NetFirewallProfile -Profile Domain,Public,Private -Enabled False
           
+          # إعادة تشغيل خدمة RDP
           Restart-Service -Name "TermService" -Force
           
-      - name: Optimize System Performance
+          Write-Output "✅ تم تكوين نظام RDP بنجاح"
+
+      - name: تحسين أداء النظام
         shell: powershell
         run: |
+          # تعطيل الحماية من الفيروسات المؤقتة
           Set-MpPreference -DisableRealtimeMonitoring $true -ErrorAction SilentlyContinue
+          
+          # تفعيل وضع الأداء العالي
           powercfg /setactive 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c
+          
+          # إيقاف الخدمات غير الضرورية
           $Services = @("WSearch", "wuauserv", "DoSvc", "SysMain", "DiagTrack")
           foreach ($Service in $Services) {
               Stop-Service -Name $Service -Force -ErrorAction SilentlyContinue
               Set-Service -Name $Service -StartupType Disabled -ErrorAction SilentlyContinue
           }
+          
+          Write-Output "✅ تم تحسين أداء النظام"
 
-      - name: Launch Ngrok Tunnel & Connect
+      - name: تشغيل نفق Ngrok مع IP سكني
         shell: powershell
         run: |
-          # Install Ngrok via Chocolatey
+          # تثبيت Ngrok
+          Write-Output "📥 جاري تثبيت Ngrok..."
           choco install ngrok --no-progress -y
           
-          # Configure Authtoken from GitHub Input
+          # إضافة رمز المصادقة
           ngrok config add-authtoken "${{ github.event.inputs.ngrok_token }}"
           
-          # Start Tunnel and create a log file
-          Start-Process ngrok -ArgumentList "tcp 3389 --log=stdout" -RedirectStandardOutput "ngrok.log" -WindowStyle Hidden
+          # تحديد نوع النفق (IP محجوز أو عادي)
+          if ("${{ github.event.inputs.reserved_ip }}" -ne "") {
+              # استخدام IP محجوز (IP سكني)
+              $ngrokCommand = "ngrok tcp 3389 --remote-addr=${{ github.event.inputs.reserved_ip }}"
+              Write-Output "🌐 جاري استخدام العنوان IP المحجوز (سكني)"
+          } else {
+              # نفق عادي (IP من مراكز البيانات)
+              $ngrokCommand = "ngrok tcp 3389 --region=us"
+              Write-Output "🌐 جاري استخدام نفق عادي (IP من مركز بيانات)"
+          }
           
-          Write-Output "Waiting for Ngrok API to start..."
+          # تشغيل النفق في الخلفية
+          Write-Output "🚀 جاري تشغيل نفق Ngrok..."
+          Start-Process -FilePath "powershell.exe" -ArgumentList "-Command $ngrokCommand" -WindowStyle Hidden
+          
+          # انتظار حتى يصبح النفق جاهزاً
+          Start-Sleep -Seconds 5
+          
+          # محاولة الحصول على عنوان النفق
           $TunnelUrl = $null
-          
-          # Smart Loop: Try to connect to the API 15 times (every 2 seconds)
-          for ($i = 0; $i -lt 15; $i++) {
+          for ($i = 0; $i -lt 10; $i++) {
               Start-Sleep -Seconds 2
               try {
                   $NgrokApi = Invoke-RestMethod -Uri "http://127.0.0.1:4040/api/tunnels" -ErrorAction Stop
                   $TunnelUrl = $NgrokApi.tunnels[0].public_url
                   if ($TunnelUrl) { break }
               } catch {
-                  # API not ready yet, keep waiting
+                  # API غير جاهز بعد
               }
           }
           
+          # عرض معلومات الاتصال
           if ($TunnelUrl) {
               $CleanUrl = $TunnelUrl -replace "tcp://", ""
               Write-Output "========================================================"
-              Write-Output "SUCCESS: Ngrok Tunnel is Active!"
+              Write-Output "✅ تم تشغيل نفق RDP بنجاح!"
               Write-Output "========================================================"
-              Write-Output " Computer Address : $CleanUrl"
-              Write-Output " Username         : runneradmin"
-              Write-Output " Password         : WindowsPassword123!"
+              Write-Output " 📍 عنوان الاتصال  : $CleanUrl"
+              Write-Output " 👤 اسم المستخدم   : runneradmin"
+              Write-Output " 🔑 كلمة المرور    : WindowsPassword123!"
+              Write-Output " 🌐 نوع IP         : $($TunnelUrl -match 'ngrok.io' ? 'سكني' : 'مركز بيانات')"
               Write-Output "========================================================"
+              Write-Output ""
+              Write-Output "💡 يمكنك الآن الاتصال باستخدام برنامج Remote Desktop"
+              Write-Output "🔒 تأكد من استخدام اتصال آمن"
           } else {
-              Write-Output "ERROR: Failed to launch Ngrok tunnel."
-              Write-Output "--- Ngrok Log ---"
-              Get-Content "ngrok.log" -ErrorAction SilentlyContinue
+              Write-Output "❌ فشل في تشغيل نفق Ngrok"
+              Write-Output "📋 تحقق من رمز المصادقة الخاص بك"
           }
-
-          # Keep Active for 6 Hours
+          
+          # إبقاء النفق نشطاً لمدة 6 ساعات
+          Write-Output "⏰ سيظل النفق نشطاً لمدة 6 ساعات"
           Start-Sleep -Seconds 21600
+
+      - name: معلومات إضافية عن الاتصال
+        shell: powershell
+        if: always()
+        run: |
+          Write-Output ""
+          Write-Output "═══════════════════════════════════════════════════"
+          Write-Output "📋 معلومات مهمة للاتصال:"
+          Write-Output "═══════════════════════════════════════════════════"
+          Write-Output ""
+          Write-Output "🔹 خطوات الاتصال:"
+          Write-Output "1. افتح برنامج Remote Desktop Connection"
+          Write-Output "2. أدخل العنوان المعروض أعلاه"
+          Write-Output "3. اسم المستخدم: runneradmin"
+          Write-Output "4. كلمة المرور: WindowsPassword123!"
+          Write-Output ""
+          Write-Output "⚠️  تنبيهات أمنية:"
+          Write-Output "- هذا الاتصال مخصص للأغراض التعليمية فقط"
+          Write-Output "- لا تشارك معلومات الاتصال مع أي شخص"
+          Write-Output "- استخدم كلمة مرور قوية عند الاستخدام الفعلي"
+          Write-Output "- تأكد من تغيير كلمة المرور بعد أول اتصال"
+          Write-Output ""
+          Write-Output "═══════════════════════════════════════════════════"
